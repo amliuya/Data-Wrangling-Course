@@ -1,0 +1,317 @@
+---
+title: "Data_Wrangling_Project"
+author: "Chuqiao Liu"
+date: "5/1/2020"
+output: pdf_document
+fontsize: 12pt
+---
+```{r setup, include=FALSE,echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+indent1 = '    '
+indent2 = paste(rep(indent1, 2), collapse='')
+indent3 = paste(rep(indent1, 3), collapse='')
+
+doeval = TRUE
+
+library(knitr)
+library(tidyverse)
+library(ggmap)
+library(maps)
+```
+
+# Abstract\
+  2020 is an election year. However, predicting voter behavior is complicated for many reasons despite the tremendous effort in collecting, analyzing, and understanding many available datasets. For my final project, I analyzed the 2016 presidential election dataset, visualized winning candidates by state level, and found connections between election and census data.\ 
+  I explore the questions including:\ 
+  relationships between voting results and unemployment rate\
+  relationships between voting results and state population\
+
+# Data\
+  In this project, I worked on three datasets election data, census data and column metadata. First, I imported data from the local file.\
+```{r importdata,echo=FALSE}
+election.raw = read.csv("election.csv") %>% as.tbl
+census_meta = read.csv("metadata.csv", sep = ";") %>% as.tbl
+census = read.csv("census.csv") %>% as.tbl
+census$CensusTract = as.factor(census$CensusTract)
+```
+
+### Election data\
+
+  Following is the first few rows of the 'election.raw' data:
+  
+```{r electionraw, echo=FALSE}
+kable(election.raw %>% head)
+dim(election.raw)
+```
+
+  The meaning of each column in `election.raw` is clear except `fips`. The accronym is short for [Federal Information Processing Standard](https://en.wikipedia.org/wiki/FIPS_county_code).
+
+  In our dataset, `fips` values denote the area (US, state, or county) that each row of data represent. For example, `fips` value of 6037 denotes Los Angeles County. some rows in `election.raw` are summary rows. These rows have `county` value of `NA`. There are two kinds of summary rows:
+
+* Federal-level summary rows have `fips` value of `US`.
+* State-level summary rows have names of each states as `fips` value.
+
+### Census data\
+
+  Following is the first few rows of the `census` data:
+
+```{r,indemnt=indent3, echo=FALSE}
+kable(census %>% head)
+dim(census)
+```
+\
+`census` is a large dataset containing 36 variables and 74001 data points. \
+### Census data: column metadata\
+
+  Column information is given in `metadata`. Following is the first few rows of the `census` data:
+```{r, dependson=data, echo=FALSE}
+kable(census_meta)
+```
+
+There are some interesting varaibles in the `census` data. For example, commuting vehicles and different working status.\
+
+# Data wrangling\
+I removed summary rows from `election.raw` data:
+
+    * Federal-level summary into a `election_federal`.
+
+```{r, indent=indent2,echo=FALSE}
+election_federal = election.raw %>%
+  filter(fips == "US")
+```
+    
+    * State-level summary into a `election_state`.
+
+```{r, indent=indent2,echo=FALSE}
+election_state = election.raw %>%
+  filter(fips %in% levels(state) & fips != "US")
+``` 
+
+    * Only county-level data is to be in `election`.
+
+```{r, indent=indent2,echo=FALSE}
+election = election.raw %>%
+  filter(county!= "NA")
+length(levels(election.raw$candidate))
+```
+
+  Based on the election data set, there were 32 named presidential candidates in the 2016 election. And we draw bar chart of all votes reveived by each candidate.\
+
+```{r candidates, echo=FALSE}
+ggplot(data=election_federal,aes(x=candidate, y=votes)) +
+  geom_bar(stat="identity", fill = "steelblue") +
+  ggtitle("Bar Chart of Votes Received by each Candidate") +
+  coord_flip()
+
+```
+  
+  We can clearly see from the bar chart that Hillary Clinton and Donald Trump won substantially more votes than other candidates.\ 
+\
+\
+  Next, I created new variables `county_winner` and `state_winner` by taking the candidate with the highest proportion of votes.\
+  
+```{r, indent=indent1,echo=FALSE,warning=FALSE}
+county_winner = election %>% 
+  group_by(fips) %>%
+  mutate_at("votes", funs(total=sum)) %>%
+  mutate(pct=votes/total) %>%
+  top_n(n=1, wt=pct)
+state_winner = election_state %>% 
+  group_by(fips) %>%
+  mutate_at("votes", funs(total=sum)) %>%
+  mutate(pct=votes/total) %>%
+  top_n(n=1, wt=pct)
+```
+    
+# Visualization
+
+  Visualization is crucial for gaining insight and intuition during data wrangling. I mapped data onto maps.
+
+  The R package `ggplot2` can be used to draw maps. 
+
+```{r statemap, message=FALSE, echo=FALSE}
+states = map_data("state")
+
+ggplot(data = states) + 
+  geom_polygon(aes(x = long, y = lat, fill = region, group = group), color = "white") + 
+  coord_fixed(1.3) +
+  guides(fill=FALSE)  # color legend is unnecessary and takes too long
+```
+
+  The variable `states` contain information to draw white polygons, and fill-colors are determined by `region`.
+\
+\
+  Then, I draw county-level map by creating `counties = map_data("county")`. Color by county
+
+```{r countymap, echo = FALSE}
+counties = map_data("county")
+
+ggplot(data = counties) + 
+  geom_polygon(aes(x = long, y = lat, fill = subregion, group = group), color = "white") + 
+  coord_fixed(1.3) +
+  guides(fill=FALSE)
+```
+\
+\
+  Next, I colored the map by the winning candidate for each state. \
+  First, I combined `states` variable and `state_winner` I created earlier using `left_join()`. \
+  Note that `left_join()` needs to match up values of states to join the tables; however, they are in different formats: e.g. `AZ` vs. `arizona`.\
+  Before using `left_join()`, I created a common column by creating a new column for `states` named
+  `fips = state.abb[match(some_column, some_function(state.name))]`. \
+  I replaced `some_column` and `some_function` to complete creation of this new column. Then `left_join()`. \
+  The figure that I had looks similar to state_level [New York Times map] (https://www.nytimes.com/elections/results/president).\
+
+```{r statewinner, warning=FALSE}
+states = states %>%
+  mutate(fips = state.abb[match(region, tolower(state.name))])
+states_win = left_join(states, state_winner, by="fips")
+
+ggplot(data = states_win) + 
+  geom_polygon(aes(x = long, y = lat, fill = candidate, group = group), color = "white") + 
+  coord_fixed(1.3)
+#  guides(fill=FALSE)
+```
+    
+  The "NA" in the map was caused by the region of District of Columbia, which was not included in any states.\
+\
+\
+  The variable `county` does not have `fips` column. So I created one by pooling information from `maps::county.fips`.\
+  Split the `polyname` column to `region` and `subregion`. Use `left_join()` combine `county.fips` into `county`.\ 
+  Also, `left_join()` previously created variable `county_winner`.\ 
+  The figure that I had looks similar to county-level [New York Times map](https://www.nytimes.com/elections/results/president).\
+
+```{r,  warning=FALSE}
+county.fips = as.data.frame(maps::county.fips)
+county.fips = county.fips %>%
+  separate(polyname, c("region","subregion"), sep=",") %>%
+  separate(subregion, c("subregion", "part"), sep=":")
+## change the county name of shannon to oglala lakota ##
+## with corresponding fips (updated in May, 2015) ##
+county.fips[county.fips$fips == "46113",]$subregion = "oglala lakota"
+county.fips[county.fips$fips == "46113",]$fips = "46102"
+
+county = left_join(counties, county.fips, by="subregion")
+county$fips = as.factor(county$fips)
+county_win = left_join(county, county_winner, by="fips")
+
+ggplot(data = county_win) + 
+  geom_polygon(aes(x = long, y = lat, fill = candidate, group = group), color = "white") + 
+  coord_fixed(1.3)
+```
+\
+\
+ Many exit polls noted that 
+    [demographics played a big role in the election](https://fivethirtyeight.com/features/demographics-not-hacking-explain-the-election-results/).
+    I Used [this Washington Post article](https://www.washingtonpost.com/graphics/politics/2016-election/exit-polls/) 
+    and [this R graph gallery](https://www.r-graph-gallery.com/) for ideas and inspiration.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+mycensus = na.omit(census)
+mycensus = mycensus%>%group_by(State)%>%summarise_all(mean)
+mycensus$state = state.abb[match(mycensus$State,state.name)]
+plotcensus = left_join(mycensus,state_winner,by = "state")
+plotcensus = plotcensus[!is.na(plotcensus$candidate),]
+ggplot(plotcensus,aes(candidate,TotalPop))+geom_boxplot()
+```
+
+I make this boxplot to compare the total population of the state voting for the different candidate. We can see that Hillary Clinton get the votes from the large population state while the small population state perfer the Donald Trump.\
+\
+\
+```{r,  warning=FALSE}
+Unemploy = census %>% 
+  group_by(State) %>%
+  summarise_at("Unemployment", funs(mean(., na.rm=TRUE)))
+Unemploy$region = tolower(Unemploy$State)
+states = map_data("state")
+states$region = as.factor(states$region)
+states_unemploy = left_join(states, Unemploy, by="region")
+
+ggplot(data = states_unemploy) + 
+  geom_polygon(aes(x = long, y = lat, fill = Unemployment, group = group), color = "white") + 
+  coord_fixed(1.3)
+# Compare to the state-level winning candidate map
+ggplot(data = states_win) + 
+  geom_polygon(aes(x = long, y = lat, fill = candidate, group = group), color = "white") + 
+  coord_fixed(1.3)
+```
+
+  By comparing the state-level unemployment map with state-level winning candidate map, I found that for map area between longitude -125 and -90, states with higher unemployment rate are more likely to have Hillary Clinton as the state winner; \
+  but for map area between longitude -90 and -65, states with higher unemployment rate are more likely to have Donald Trump as the state winner. There should be other important factors that outweight the effect of unemployment rate on predicting the state-level winner. \
+\
+\
+  The `census` data contains high resolution information (more fine-grained than county-level).\ 
+  I aggregated the information into county-level data by 
+    computing `TotalPop`-weighted average of each attributes for each county.\     I also created the following variables:
+    
+  * _Clean census data `census.del`_: 
+      start with `census`, I filtered out any rows with missing values and I converted {`Men`, `Employed`, `Citizen`} attributes to a percentages (meta data seems to be inaccurate).\
+      Then, I computed `Minority` attribute by combining {Hispanic, Black, Native, Asian, Pacific}, remove {`Walk`, `PublicWork`, `Construction`}.\  
+      _Many columns seem to be related, and, if a set that adds up to 100%, one column will be deleted._  
+
+```{r, indent=indent2, echo = FALSE}
+# Drop rows with missing values, and compute Minority arrtibute
+census.del = census %>% drop_na() %>% 
+  mutate(Minority = Hispanic+Black+Native+Asian+Pacific)%>%
+  dplyr::select(-c(Hispanic, Black, Native, Asian, Pacific))
+# Convert {Men, Employed, Citizen} attributes to a percentage
+census.del$Men <- census.del$Men/census.del$TotalPop*100
+census.del$Employed<-census.del$Employed/census.del$TotalPop*100
+census.del$Citizen<-census.del$Citizen/census.del$TotalPop*100
+# Drop {Women, Walk, PublicWork, Construction}
+census.del  = census.del %>% dplyr::select(-c(Women, Walk, PublicWork, Construction))
+```      
+
+  * _Sub-county census data, `census.subct`_: 
+      start with `census.del` from above, `group_by()` two attributes {`State`, `County`}, 
+      I used `add_tally()` to compute `CountyTotal`. Also, I computed the weight by `TotalPop/CountyTotal`.\
+
+```{r, indent=indent2, echo = FALSE}
+census.subct = census.del %>% 
+  group_by(State, County) %>%
+  add_tally(wt=TotalPop) %>%
+  mutate(weight=TotalPop/n)
+colnames(census.subct)[30] = "CountyTotal"
+```    
+
+  * _County census data, `census.ct`_: 
+      start with `census.subct`, I used `summarize_at()` to compute weighted sum\
+
+```{r, indent=indent2, warning = FALSE, echo=FALSE}
+census.ct = census.subct %>%
+  summarize_at(vars(Men:CountyTotal), funs(weighted.mean(., weight)))
+```     
+
+  Here are few rows of `census.ct`_: 
+
+```{r, warning=FALSE, echo=FALSE}
+kable(census.ct %>% head)
+dim(census.ct)
+``` 
+
+  Here I draw two graphs to visualize more details of variables that I created.\
+```{r , echo=FALSE}
+
+census.ct_county <- census.ct%>% select(County, CountyTotal) %>%arrange(CountyTotal)
+
+census.ct_county<-census.ct_county[c(1:10),]
+ggplot(data=census.ct_county,aes(x=County, y=CountyTotal)) +
+  geom_bar(stat="identity", fill = "steelblue") +
+  ggtitle("Top ten population - County") +
+  coord_flip()
+
+census.ct_minority <- census.ct%>% select(County, Minority) %>%arrange(Minority)
+
+census.ct_minority<-census.ct_minority[c(1:10),]
+ggplot(data=census.ct_minority,aes(x=County, y=Minority)) +
+  geom_bar(stat="identity", fill = "steelblue") +
+  ggtitle("weighted average of minority for top ten county") +
+  coord_flip()
+```
+
+  `census.ct` can be very useful if we want to manipulate census data at a county level.\
+
+# Conclusion\
+  The election data containing several levels including federal, state, county, and sub-county level. The census dataset also contains data from different region at different levels. Difficulties of this project includes understanding variables, cleaning dataset, aggregate data into different levels. \
+
+### Future Work\
+  More work can be done to construct more complicated political relevant questions and visualization. This can be done by creating a user interface using the Rshiny package.\
